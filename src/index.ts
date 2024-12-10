@@ -150,9 +150,9 @@ async function cachedFunction<T>(env: Env, key: string, func: () => Promise<T | 
 // }
 
 async function maybeJson<T>(response: Response): Promise<T | null> {
-	if (!response.ok) {
-		return null;
-	}
+	// if (!response.ok) {
+	// 	return null;
+	// }
 	try {
 		return await response.json();
 	} catch (e) {
@@ -182,29 +182,40 @@ async function storeCached<T>(env: Env, key: string, ok: boolean, data: T | null
 	return wrapped;
 }
 
-async function nameToUuid(env: Env, name: string): Promise<CachedResponse<NameLookupResponse>> {
+function wrapHeaders(headers: Headers): HeadersInit {
+	return {
+		...headers,
+		'X-Proxied-By': 'mcproxy.dev'
+	};
+}
+
+async function nameToUuid(env: Env, name: string, headers: Headers): Promise<CachedResponse<NameLookupResponse>> {
 	const KEY = `name-to-uuid-${ name }`;
 	return await cachedFunction<NameLookupResponse>(env, KEY, async () => {
-		const response = await fetch(`https://api.mojang.com/users/profiles/minecraft/${ name }`);
-		if (!response.ok) {
-			return null;
-		}
+		const response = await fetch(`https://api.mojang.com/users/profiles/minecraft/${ name }`, {
+			headers: wrapHeaders(headers)
+		});
+		// if (!response.ok) {
+		// 	return null;
+		// }
 		const data: NameLookupResponse | null = await maybeJson(response);
 		if (data) {
-			await storeCached(env, `uuid-to-name-${ data.id }`, true, data,EXPIRATION_UUID_LOOKUP);
+			await storeCached(env, `uuid-to-name-${ data.id }`, true, data, EXPIRATION_UUID_LOOKUP);
 		}
 		return data;
 	}, EXPIRATION_NAME_LOOKUP);
 	// return await cachedFetch<NameLookupResponse>(env, `name-to-uuid-${ name }`, `https://api.mojang.com/users/profiles/minecraft/${ name }`);
 }
 
-async function getProfile(env: Env, uuid: string): Promise<CachedResponse<NameLookupResponse>> {
+async function getProfile(env: Env, uuid: string, headers: Headers): Promise<CachedResponse<NameLookupResponse>> {
 	const KEY = `uuid-to-profile-${ uuid }`;
 	return await cachedFunction<ProfileLookupResponse>(env, KEY, async () => {
-		const response = await fetch(`https://sessionserver.mojang.com/session/minecraft/profile/${ uuid }?unsigned=false`);
-		if (!response.ok) {
-			return null;
-		}
+		const response = await fetch(`https://sessionserver.mojang.com/session/minecraft/profile/${ uuid }?unsigned=false`, {
+			headers: wrapHeaders(headers)
+		});
+		// if (!response.ok) {
+		// 	return null;
+		// }
 		const data: ProfileLookupResponse | null = await maybeJson(response);
 		// await storeCached(env, `uuid-to-name-${ data.id }`, true, {
 		// 	id: data.id,
@@ -219,10 +230,10 @@ async function getProfile(env: Env, uuid: string): Promise<CachedResponse<NameLo
 	// return await cachedFetch<NameLookupResponse>(env, `name-to-uuid-${ name }`, `https://api.mojang.com/users/profiles/minecraft/${ name }`);
 }
 
-async function uuidToName(env: Env, uuid: string): Promise<CachedResponse<NameLookupResponse>> {
+async function uuidToName(env: Env, uuid: string, headers: Headers): Promise<CachedResponse<NameLookupResponse>> {
 	const KEY = `uuid-to-name-${ uuid }`;
 	return await cachedFunction<NameLookupResponse>(env, KEY, async () => {
-		const cachedProfile = await getProfile(env, uuid);
+		const cachedProfile = await getProfile(env, uuid, headers);
 		if (!cachedProfile.ok || !cachedProfile.data) {
 			return null;
 		}
@@ -230,7 +241,7 @@ async function uuidToName(env: Env, uuid: string): Promise<CachedResponse<NameLo
 		await storeCached(env, `name-to-uuid-${ data.name }`, true, {
 			id: data.id,
 			name: data.name
-		},EXPIRATION_NAME_LOOKUP);
+		}, EXPIRATION_NAME_LOOKUP);
 		return {
 			id: data.id,
 			name: data.name
@@ -245,7 +256,7 @@ router.get('/name-to-uuid/:name', async ({ env, req }) => {
 	if (!isValidName(name)) {
 		return Response.json(errorBody('Invalid name'), { status: 400 });
 	}
-	const response = await nameToUuid(env, name);
+	const response = await nameToUuid(env, name, req.headers);
 	return sendResponse(response);
 });
 
@@ -254,7 +265,7 @@ router.get('/uuid-to-name/:uuid', async ({ env, req }) => {
 	if (!isValidUuid(uuid)) {
 		return Response.json(errorBody('Invalid UUID'), { status: 400 });
 	}
-	const response = await uuidToName(env, uuid);
+	const response = await uuidToName(env, uuid, req.headers);
 	return sendResponse(response);
 });
 
@@ -265,7 +276,7 @@ router.get('/uuid/:nameOrUuid', async ({ env, req }) => {
 		if (!isValidName(nameOrUuid)) {
 			return Response.json(errorBody('Invalid name'), { status: 400 });
 		}
-		const response = await nameToUuid(env, nameOrUuid);
+		const response = await nameToUuid(env, nameOrUuid, req.headers);
 		return Response.json(response, {
 			headers: {
 				'Cache-Control': `public, max-age=${ response.meta.expiration }`
@@ -275,7 +286,7 @@ router.get('/uuid/:nameOrUuid', async ({ env, req }) => {
 		if (!isValidUuid(nameOrUuid)) {
 			return Response.json(errorBody('Invalid uuid'), { status: 400 });
 		}
-		const response = await uuidToName(env, nameOrUuid);
+		const response = await uuidToName(env, nameOrUuid, req.headers);
 		return sendResponse(response);
 	}
 });
@@ -285,8 +296,15 @@ router.get('/profile/:uuid', async ({ env, req }) => {
 	if (!isValidUuid(uuid)) {
 		return Response.json(errorBody('Invalid UUID'), { status: 400 });
 	}
-	const response = await getProfile(env, uuid);
+	const response = await getProfile(env, uuid, req.headers);
 	return sendResponse(response);
+});
+
+router.get('/test', async ({ env, req }) => {
+	const response = await fetch(`https://api.mojang.com/users/profiles/minecraft/inventivetalent`, {
+		headers: req.headers
+	});
+	return response;
 });
 
 function sendResponse<T>(response: CachedResponse<T>): Response {
