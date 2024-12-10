@@ -103,7 +103,7 @@ function isValidUuid(uuid: string): boolean {
 
 async function cachedFunction<T>(env: Env, key: string, func: () => Promise<T | null>, expiration: number = 60): Promise<CachedResponse<T>> {
 	key = sanitizeKey(key);
-	const cached: CachedResponse<T> | null = await env.PROXY_CACHE.get(key, { type: 'json' });
+	const cached: CachedResponse<T> | null = await env.PROXY_CACHE.get(key, { type: 'json', cacheTtl: expiration });
 	if (cached) {
 		cached.meta.cached = true;
 		return cached;
