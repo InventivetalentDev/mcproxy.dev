@@ -8,6 +8,7 @@ import {
 	EXPIRATION_UUID_LOOKUP,
 	storeCached
 } from './cache';
+import { getProfile, nameToUuid, uuidToName } from './apis';
 
 // Env Types
 export type Var<T = string> = T
@@ -101,66 +102,6 @@ router.post('/user/:id', ({ req }) => {
 
 
 
-async function nameToUuid(env: Env, name: string, headers: Headers): Promise<CachedResponse<NameLookupResponse>> {
-	const KEY = `name-to-uuid-${ name }`;
-	return await cachedFunction<NameLookupResponse>(env, KEY, async () => {
-		const response = await fetch(`https://api.mojang.com/users/profiles/minecraft/${ name }`, {
-			headers: wrapHeaders(headers)
-		});
-		// if (!response.ok) {
-		// 	return null;
-		// }
-		const data: NameLookupResponse | null = await maybeJson(response);
-		if (data) {
-			await storeCached(env, `uuid-to-name-${ data.id }`, true, data, EXPIRATION_UUID_LOOKUP);
-		}
-		return data;
-	}, EXPIRATION_NAME_LOOKUP);
-	// return await cachedFetch<NameLookupResponse>(env, `name-to-uuid-${ name }`, `https://api.mojang.com/users/profiles/minecraft/${ name }`);
-}
-
-async function getProfile(env: Env, uuid: string, headers: Headers): Promise<CachedResponse<NameLookupResponse>> {
-	const KEY = `uuid-to-profile-${ uuid }`;
-	return await cachedFunction<ProfileLookupResponse>(env, KEY, async () => {
-		const response = await fetch(`https://sessionserver.mojang.com/session/minecraft/profile/${ uuid }?unsigned=false`, {
-			headers: wrapHeaders(headers)
-		});
-		// if (!response.ok) {
-		// 	return null;
-		// }
-		const data: ProfileLookupResponse | null = await maybeJson(response);
-		// await storeCached(env, `uuid-to-name-${ data.id }`, true, {
-		// 	id: data.id,
-		// 	name: data.name
-		// });
-		// await storeCached(env, `name-to-uuid-${ data.name }`, true, {
-		// 	id: data.id,
-		// 	name: data.name
-		// });
-		return data;
-	}, EXPIRATION_PROFILE);
-	// return await cachedFetch<NameLookupResponse>(env, `name-to-uuid-${ name }`, `https://api.mojang.com/users/profiles/minecraft/${ name }`);
-}
-
-async function uuidToName(env: Env, uuid: string, headers: Headers): Promise<CachedResponse<NameLookupResponse>> {
-	const KEY = `uuid-to-name-${ uuid }`;
-	return await cachedFunction<NameLookupResponse>(env, KEY, async () => {
-		const cachedProfile = await getProfile(env, uuid, headers);
-		if (!cachedProfile.ok || !cachedProfile.data) {
-			return null;
-		}
-		const data = cachedProfile.data;
-		await storeCached(env, `name-to-uuid-${ data.name }`, true, {
-			id: data.id,
-			name: data.name
-		}, EXPIRATION_NAME_LOOKUP);
-		return {
-			id: data.id,
-			name: data.name
-		};
-	}, EXPIRATION_UUID_LOOKUP);
-	// return await cachedFetch<NameLookupResponse>(env, `name-to-uuid-${ name }`, `https://api.mojang.com/users/profiles/minecraft/${ name }`);
-}
 
 
 router.get('/name-to-uuid/:name', async ({ env, req }) => {
