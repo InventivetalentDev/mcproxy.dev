@@ -19,10 +19,20 @@ export const HTML_WRAPPER = (content: string) => `<!DOCTYPE html>
 				overflow: auto;
 				background: #f4f4f4;
 			}
+
+			footer {
+				margin-top: 60px;
+				text-align: center;
+			}
 		</style>
 </head>
 <body>
+	<main>
 	${ content }
+  </main>
+  <footer>
+  <span>Created by <a href="https://inventivetalent.org" target="_blank">inventivetalent</a> - Not affiliated with Minecraft/Mojang/Microsoft</span>
+	</footer>
 	<script>
 	document.addEventListener('DOMContentLoaded', function() {
 		const pres = document.querySelectorAll('pre[data-fetch]');
