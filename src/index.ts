@@ -183,10 +183,7 @@ async function storeCached<T>(env: Env, key: string, ok: boolean, data: T | null
 }
 
 function wrapHeaders(headers: Headers): HeadersInit {
-	return {
-		...headers,
-		'X-Proxied-By': 'mcproxy.dev'
-	};
+	return headers;
 }
 
 async function nameToUuid(env: Env, name: string, headers: Headers): Promise<CachedResponse<NameLookupResponse>> {
