@@ -1,5 +1,6 @@
 import { Router } from '@tsndr/cloudflare-worker-router';
-import { RequestInfo, URL } from '@cloudflare/workers-types/2023-07-01/index';
+import {  isValidName, isValidUuid, maybeJson, sanitizeKey,  wrapHeaders } from './util';
+import { errorBody, sendResponse } from './response';
 
 // Env Types
 export type Var<T = string> = T
@@ -89,17 +90,7 @@ router.post('/user/:id', ({ req }) => {
 	return Response.json({ userId }, { status: 204 });
 });
 
-function sanitizeKey(key: string): string {
-	return key.replace(/[^a-z0-9-_]/gi, '');
-}
 
-function isValidName(name: string): boolean {
-	return /^[a-zA-Z0-9_]{1,16}$/.test(name);
-}
-
-function isValidUuid(uuid: string): boolean {
-	return /^[a-f0-9-]{32,36}$/.test(uuid);
-}
 
 async function cachedFunction<T>(env: Env, key: string, func: () => Promise<T | null>, expiration: number = 60): Promise<CachedResponse<T>> {
 	key = sanitizeKey(key);
@@ -149,17 +140,7 @@ async function cachedFunction<T>(env: Env, key: string, func: () => Promise<T | 
 // 	return wrapped;
 // }
 
-async function maybeJson<T>(response: Response): Promise<T | null> {
-	// if (!response.ok) {
-	// 	return null;
-	// }
-	try {
-		return await response.json();
-	} catch (e) {
-		//console.error(e);
-	}
-	return null;
-}
+
 
 const EXPIRATION_PROFILE = 60;
 const EXPIRATION_NAME_LOOKUP = 60 * 15;
@@ -182,9 +163,6 @@ async function storeCached<T>(env: Env, key: string, ok: boolean, data: T | null
 	return wrapped;
 }
 
-function wrapHeaders(headers: Headers): HeadersInit {
-	return headers;
-}
 
 async function nameToUuid(env: Env, name: string, headers: Headers): Promise<CachedResponse<NameLookupResponse>> {
 	const KEY = `name-to-uuid-${ name }`;
@@ -304,29 +282,7 @@ router.get('/test', async ({ env, req }) => {
 	return response;
 });
 
-function sendResponse<T>(response: CachedResponse<T>): Response {
-	return Response.json(response, {
-		headers: {
-			'Cache-Control': `public, max-age=${ response.meta.expiration }`,
-			'Last-Modified': new Date(response.meta.fetched).toUTCString()
-		}
-	});
-}
 
-function errorBody(message: string): CachedResponse<any> {
-	return {
-		ok: false,
-		data: {
-			error: message
-		},
-		meta: {
-			cached: false,
-			fetched: Date.now(),
-			expires: Date.now() + 1000,
-			expiration: 1
-		}
-	};
-}
 
 
 // // Delete route using a middleware
