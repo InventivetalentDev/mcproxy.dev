@@ -9,6 +9,7 @@ import {
 	storeCached
 } from './cache';
 import { getProfile, nameToUuid, uuidToName } from './apis';
+import { INDEX_HTML, PROFILE_HTML, rawHtmlResponse, UUID_HTML } from './html';
 
 // Env Types
 export type Var<T = string> = T
@@ -101,7 +102,9 @@ router.post('/user/:id', ({ req }) => {
 
 
 
-
+router.get('/',async () => {
+	return await rawHtmlResponse(INDEX_HTML);
+});
 
 
 router.get('/name-to-uuid/:name', async ({ env, req }) => {
@@ -122,6 +125,9 @@ router.get('/uuid-to-name/:uuid', async ({ env, req }) => {
 	return sendResponse(response);
 });
 
+router.get('/uuid',async()=>{
+	return await rawHtmlResponse(UUID_HTML);
+})
 
 router.get('/uuid/:nameOrUuid', async ({ env, req }) => {
 	const nameOrUuid = req.params.nameOrUuid;
@@ -142,6 +148,10 @@ router.get('/uuid/:nameOrUuid', async ({ env, req }) => {
 		const response = await uuidToName(env, nameOrUuid, req.headers);
 		return sendResponse(response);
 	}
+});
+
+router.get('/profile',async()=>{
+	return await rawHtmlResponse(PROFILE_HTML);
 });
 
 router.get('/profile/:uuid', async ({ env, req }) => {
