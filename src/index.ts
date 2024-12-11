@@ -42,6 +42,7 @@ export type ExtCtx = {
 
 export type CachedResponse<T> = {
 	ok: boolean;
+	status: number;
 	data: T | null;
 	meta: {
 		cached?: boolean;
@@ -60,6 +61,11 @@ export type ProfileLookupResponse = {
 	id: string;
 	name: string;
 	properties: any[];
+}
+
+export type DataAndStatus<T> = {
+	status: number;
+	data: T;
 }
 
 // Initialize Router

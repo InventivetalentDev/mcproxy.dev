@@ -1,16 +1,17 @@
 import { sanitizeKey } from './util';
-import { CachedResponse } from './index';
+import { CachedResponse, DataAndStatus } from './index';
 
-export async function cachedFunction<T>(env: Env, key: string, func: () => Promise<T | null>, expiration: number = 60): Promise<CachedResponse<T>> {
+export async function cachedFunction<T>(env: Env, key: string, func: () => Promise<DataAndStatus<T | null>>, expiration: number = 60): Promise<CachedResponse<T>> {
 	key = sanitizeKey(key);
 	const cached: CachedResponse<T> | null = await env.PROXY_CACHE.get(key, { type: 'json', cacheTtl: expiration });
 	if (cached) {
 		cached.meta.cached = true;
 		return cached;
 	}
-	const data = await func();
+	const { data, status } = await func();
 	const wrapped: CachedResponse<T> = {
-		ok: true,
+		ok: Math.floor(status / 100) === 2,
+		status: status,
 		data: data,
 		meta: {
 			cached: false,
@@ -50,15 +51,15 @@ export async function cachedFunction<T>(env: Env, key: string, func: () => Promi
 // }
 
 
-
 export const EXPIRATION_PROFILE = 60;
 export const EXPIRATION_NAME_LOOKUP = 60 * 15;
 export const EXPIRATION_UUID_LOOKUP = 60 * 5;
 
-export async function storeCached<T>(env: Env, key: string, ok: boolean, data: T | null, expiration: number = 60): Promise<CachedResponse<T>> {
+export async function storeCached<T>(env: Env, key: string, status: number, data: T | null, expiration: number = 60): Promise<CachedResponse<T>> {
 	key = sanitizeKey(key);
 	const wrapped: CachedResponse<T> = {
-		ok: ok,
+		ok: Math.floor(status / 100) === 2,
+		status: status,
 		data: data,
 		meta: {
 			fetched: Date.now(),

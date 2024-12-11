@@ -19,9 +19,9 @@ export async function nameToUuid(env: Env, name: string, headers: Headers): Prom
 		// }
 		const data: NameLookupResponse | null = await maybeJson(response);
 		if (data) {
-			await storeCached(env, `uuid-to-name-${ data.id }`, true, data, EXPIRATION_UUID_LOOKUP);
+			await storeCached(env, `uuid-to-name-${ data.id }`, response.status, data, EXPIRATION_UUID_LOOKUP);
 		}
-		return data;
+		return { data, status: response.status };
 	}, EXPIRATION_NAME_LOOKUP);
 	// return await cachedFetch<NameLookupResponse>(env, `name-to-uuid-${ name }`, `https://api.mojang.com/users/profiles/minecraft/${ name }`);
 }
@@ -44,7 +44,7 @@ export async function getProfile(env: Env, uuid: string, headers: Headers): Prom
 		// 	id: data.id,
 		// 	name: data.name
 		// });
-		return data;
+		return { data, status: response.status };
 	}, EXPIRATION_PROFILE);
 	// return await cachedFetch<NameLookupResponse>(env, `name-to-uuid-${ name }`, `https://api.mojang.com/users/profiles/minecraft/${ name }`);
 }
@@ -54,16 +54,19 @@ export async function uuidToName(env: Env, uuid: string, headers: Headers): Prom
 	return await cachedFunction<NameLookupResponse>(env, KEY, async () => {
 		const cachedProfile = await getProfile(env, uuid, headers);
 		if (!cachedProfile.ok || !cachedProfile.data) {
-			return null;
+			return { data: null, status: cachedProfile.status };
 		}
 		const data = cachedProfile.data;
-		await storeCached(env, `name-to-uuid-${ data.name }`, true, {
+		await storeCached(env, `name-to-uuid-${ data.name }`, cachedProfile.status, {
 			id: data.id,
 			name: data.name
 		}, EXPIRATION_NAME_LOOKUP);
 		return {
-			id: data.id,
-			name: data.name
+			data: {
+				id: data.id,
+				name: data.name
+			},
+			status: cachedProfile.status
 		};
 	}, EXPIRATION_UUID_LOOKUP);
 	// return await cachedFetch<NameLookupResponse>(env, `name-to-uuid-${ name }`, `https://api.mojang.com/users/profiles/minecraft/${ name }`);
