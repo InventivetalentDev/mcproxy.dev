@@ -11,7 +11,7 @@ import { CachedResponse, NameLookupResponse, ProfileLookupResponse } from './ind
 export async function nameToUuid(env: Env, name: string, headers: Headers): Promise<CachedResponse<NameLookupResponse>> {
 	const KEY = `name-to-uuid-${ name }`;
 	return await cachedFunction<NameLookupResponse>(env, KEY, async () => {
-		const response = await fetch(`https://api.mojang.com/users/profiles/minecraft/${ name }`, {
+		const response = await fetch(`https://api.minecraftservices.com/minecraft/profile/lookup/name/${ name }`, {
 			headers: wrapHeaders(headers)
 		});
 		// if (!response.ok) {
@@ -23,7 +23,7 @@ export async function nameToUuid(env: Env, name: string, headers: Headers): Prom
 		}
 		return { data, status: response.status };
 	}, EXPIRATION_NAME_LOOKUP);
-	// return await cachedFetch<NameLookupResponse>(env, `name-to-uuid-${ name }`, `https://api.mojang.com/users/profiles/minecraft/${ name }`);
+	// return await cachedFetch<NameLookupResponse>(env, `name-to-uuid-${ name }`, `https://api.minecraftservices.com/minecraft/profile/lookup/name/${ name }`);
 }
 
 export async function getProfile(env: Env, uuid: string, headers: Headers): Promise<CachedResponse<NameLookupResponse>> {
@@ -46,7 +46,7 @@ export async function getProfile(env: Env, uuid: string, headers: Headers): Prom
 		// });
 		return { data, status: response.status };
 	}, EXPIRATION_PROFILE);
-	// return await cachedFetch<NameLookupResponse>(env, `name-to-uuid-${ name }`, `https://api.mojang.com/users/profiles/minecraft/${ name }`);
+	// return await cachedFetch<NameLookupResponse>(env, `name-to-uuid-${ name }`, `https://api.minecraftservices.com/minecraft/profile/lookup/name/${ name }`);
 }
 
 export async function uuidToName(env: Env, uuid: string, headers: Headers): Promise<CachedResponse<NameLookupResponse>> {
@@ -69,5 +69,5 @@ export async function uuidToName(env: Env, uuid: string, headers: Headers): Prom
 			status: cachedProfile.status
 		};
 	}, EXPIRATION_UUID_LOOKUP);
-	// return await cachedFetch<NameLookupResponse>(env, `name-to-uuid-${ name }`, `https://api.mojang.com/users/profiles/minecraft/${ name }`);
+	// return await cachedFetch<NameLookupResponse>(env, `name-to-uuid-${ name }`, `https://api.minecraftservices.com/minecraft/profile/lookup/name/${ name }`);
 }

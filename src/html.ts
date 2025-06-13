@@ -105,7 +105,7 @@ export const UUID_HTML = HTML_WRAPPER(`
 </div>
 <br/>
 <div>
-Proxies <code>https://api.mojang.com/users/profiles/minecraft/{name}</code> and <code>https://sessionserver.mojang.com/session/minecraft/profile/{uuid}</code>
+Proxies <code>https://api.minecraftservices.com/minecraft/profile/lookup/name/{name}</code> and <code>https://sessionserver.mojang.com/session/minecraft/profile/{uuid}</code>
 </div>
 <br/>
 <div>

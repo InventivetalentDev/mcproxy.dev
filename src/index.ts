@@ -170,7 +170,7 @@ router.get('/profile/:uuid', async ({ env, req }) => {
 });
 
 router.get('/test', async ({ env, req }) => {
-	const response = await fetch(`https://api.mojang.com/users/profiles/minecraft/inventivetalent`, {
+	const response = await fetch(`https://api.minecraftservices.com/minecraft/profile/lookup/name/inventivetalent`, {
 		headers: req.headers
 	});
 	return response;
