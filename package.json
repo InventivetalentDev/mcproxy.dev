@@ -7,14 +7,15 @@
     "dev": "wrangler dev",
     "start": "wrangler dev",
     "test": "vitest",
-    "cf-typegen": "wrangler types"
+    "cf-typegen": "wrangler types",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.5.2",
     "@cloudflare/workers-types": "^4.20241205.0",
     "typescript": "^5.5.2",
     "vitest": "2.1.8",
-    "wrangler": "^4.20.0"
+    "wrangler": "^4.107.0"
   },
   "packageManager": "yarn@1.22.22+sha1.ac34549e6aa8e7ead463a7407e1c7390f61a6610",
   "dependencies": {

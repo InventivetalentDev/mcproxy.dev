@@ -1,34 +1,14 @@
 import { Router } from '@tsndr/cloudflare-worker-router';
-import {  isValidName, isValidUuid, maybeJson, sanitizeKey,  wrapHeaders } from './util';
-import { errorBody, sendResponse } from './response';
-import {
-	cachedFunction,
-	EXPIRATION_NAME_LOOKUP,
-	EXPIRATION_PROFILE,
-	EXPIRATION_UUID_LOOKUP,
-	storeCached
-} from './cache';
-import { getProfile, nameToUuid, uuidToName } from './apis';
+import { isValidName, isValidUuid, wantsFresh } from './util';
+import { sendError, sendResponse } from './response';
+import { CacheSource } from './cache';
+import { resolveConfig } from './config';
+import { getProfile, LookupContext, nameToUuid, uuidToName } from './apis';
 import { INDEX_HTML, PROFILE_HTML, rawHtmlResponse, UUID_HTML } from './html';
 
 // Env Types
 export type Var<T = string> = T
 export type Secret<T = string> = T
-
-// export type Env = {
-//     // Example binding to KV. Learn more at https://developers.cloudflare.com/workers/runtime-apis/kv/
-//     // MY_KV_NAMESPACE: KVNamespace
-//     //
-//     // Example binding to Durable Object. Learn more at https://developers.cloudflare.com/workers/runtime-apis/durable-objects/
-//     // MY_DURABLE_OBJECT: DurableObjectNamespace
-//     //
-//     // Example binding to R2. Learn more at https://developers.cloudflare.com/workers/runtime-apis/r2/
-//     // MY_BUCKET: R2Bucket
-//
-//     ENVIRONMENT: Var<'dev' | 'prod'>
-//
-//     SECRET_TOKEN: Secret
-// }
 
 // Request Extension
 export type ExtReq = {
@@ -46,6 +26,12 @@ export type CachedResponse<T> = {
 	data: T | null;
 	meta: {
 		cached?: boolean;
+		/** Served past its soft expiry while a refresh runs in the background. */
+		stale?: boolean;
+		/** Upstream failed and we had nothing to fall back on. Deliberately not persisted. */
+		transient?: boolean;
+		/** Which layer answered: memory, kv, stale or origin. */
+		source?: CacheSource;
 		fetched: number;
 		expires: number;
 		expiration: number;
@@ -74,12 +60,16 @@ const router = new Router<Env, ExtCtx, ExtReq>();
 // Enabling build in CORS support
 router.cors();
 
-// // Register global middleware
-// router.use(({ env, req }) => {
-//     // Intercept if token doesn't match
-//     if (req.headers.get('authorization') !== env.SECRET_TOKEN)
-//         return new Response(null, { status: 401 })
-// })
+function lookupContext(env: Env, req: { headers: Headers }, ctx?: ExecutionContext): LookupContext {
+	const config = resolveConfig(env);
+	return {
+		env: env,
+		ctx: ctx,
+		headers: req.headers,
+		config: config,
+		bypass: config.allowBypass && wantsFresh(req.headers)
+	};
+}
 
 // Simple get
 router.get('/user', () => {
@@ -106,92 +96,66 @@ router.post('/user/:id', ({ req }) => {
 });
 
 
-
-
-router.get('/',async () => {
+router.get('/', async () => {
 	return await rawHtmlResponse(INDEX_HTML);
 });
 
 
-router.get('/name-to-uuid/:name', async ({ env, req }) => {
+router.get('/name-to-uuid/:name', async ({ env, req, ctx }) => {
 	const name = req.params.name;
 	if (!isValidName(name)) {
-		return Response.json(errorBody('Invalid name'), { status: 400 });
+		return sendError('Invalid name');
 	}
-	const response = await nameToUuid(env, name, req.headers);
-	return sendResponse(response);
+	const lookup = lookupContext(env, req, ctx);
+	const response = await nameToUuid(lookup, name);
+	return sendResponse(response, lookup.config.name, lookup.config);
 });
 
-router.get('/uuid-to-name/:uuid', async ({ env, req }) => {
+router.get('/uuid-to-name/:uuid', async ({ env, req, ctx }) => {
 	const uuid = req.params.uuid;
 	if (!isValidUuid(uuid)) {
-		return Response.json(errorBody('Invalid UUID'), { status: 400 });
+		return sendError('Invalid UUID');
 	}
-	const response = await uuidToName(env, uuid, req.headers);
-	return sendResponse(response);
+	const lookup = lookupContext(env, req, ctx);
+	const response = await uuidToName(lookup, uuid);
+	return sendResponse(response, lookup.config.profile, lookup.config);
 });
 
-router.get('/uuid',async()=>{
+router.get('/uuid', async () => {
 	return await rawHtmlResponse(UUID_HTML);
-})
+});
 
-router.get('/uuid/:nameOrUuid', async ({ env, req }) => {
+router.get('/uuid/:nameOrUuid', async ({ env, req, ctx }) => {
 	const nameOrUuid = req.params.nameOrUuid;
+	const lookup = lookupContext(env, req, ctx);
 	if (nameOrUuid.length < 32) {
 		if (!isValidName(nameOrUuid)) {
-			return Response.json(errorBody('Invalid name'), { status: 400 });
+			return sendError('Invalid name');
 		}
-		const response = await nameToUuid(env, nameOrUuid, req.headers);
-		return Response.json(response, {
-			headers: {
-				'Cache-Control': `public, max-age=${ response.meta.expiration }`
-			}
-		});
+		const response = await nameToUuid(lookup, nameOrUuid);
+		return sendResponse(response, lookup.config.name, lookup.config);
 	} else {
 		if (!isValidUuid(nameOrUuid)) {
-			return Response.json(errorBody('Invalid uuid'), { status: 400 });
+			return sendError('Invalid uuid');
 		}
-		const response = await uuidToName(env, nameOrUuid, req.headers);
-		return sendResponse(response);
+		const response = await uuidToName(lookup, nameOrUuid);
+		return sendResponse(response, lookup.config.profile, lookup.config);
 	}
 });
 
-router.get('/profile',async()=>{
+router.get('/profile', async () => {
 	return await rawHtmlResponse(PROFILE_HTML);
 });
 
-router.get('/profile/:uuid', async ({ env, req }) => {
+router.get('/profile/:uuid', async ({ env, req, ctx }) => {
 	const uuid = req.params.uuid;
 	if (!isValidUuid(uuid)) {
-		return Response.json(errorBody('Invalid UUID'), { status: 400 });
+		return sendError('Invalid UUID');
 	}
-	const response = await getProfile(env, uuid, req.headers);
-	return sendResponse(response);
+	const lookup = lookupContext(env, req, ctx);
+	const response = await getProfile(lookup, uuid);
+	return sendResponse(response, lookup.config.profile, lookup.config);
 });
-
-router.get('/test', async ({ env, req }) => {
-	const response = await fetch(`https://api.minecraftservices.com/minecraft/profile/lookup/name/inventivetalent`, {
-		headers: req.headers
-	});
-	return response;
-});
-
-
-
-
-// // Delete route using a middleware
-// router.delete('/user/:id', ({ env, req }) => {
-//     if (req.headers.get('authorization') === env.SECRET_TOKEN)
-//         return new Response(null, { status: 401 })
-//
-// }, ({ req }) => {
-//
-//   const userId = req.params.id
-//
-//   // Do stuff...
-//
-//   return Response.json({ userId })
-// })
 
 // Listen Cloudflare Workers Fetch Event
 export default {

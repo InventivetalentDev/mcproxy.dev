@@ -146,6 +146,8 @@ export async function rawHtmlResponse(html: string) {
   const init = {
     headers: {
       'content-type': 'text/html;charset=UTF-8',
+      // Static, so let the edge serve it instead of invoking the Worker for every visitor.
+      'cache-control': 'public, max-age=3600, stale-while-revalidate=86400',
     },
   }
 
