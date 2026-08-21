@@ -1,8 +1,46 @@
 #:schema node_modules/wrangler/config-schema.json
 name = "mcproxy"
 main = "src/index.ts"
-compatibility_date = "2024-12-05"
+compatibility_date = "2026-08-20"
 compatibility_flags = ["nodejs_compat"]
+
+# Workers Caching. A cache hit is answered by Cloudflare without invoking this Worker at all,
+# so it costs no KV reads and no CPU, and concurrent misses for one key are collapsed into a
+# single invocation. Responses opt in through their Cache-Control headers (see src/response.ts).
+# Docs: https://developers.cloudflare.com/workers/cache/
+[cache]
+enabled = true
+# Without this the Worker version is part of the cache key, so every deploy starts from an
+# empty cache and the first requests after it fall through to KV.
+cross_version_cache = true
+
+# Cache tuning, read by src/config.ts. Values are seconds. A key is written at most once per
+# *_SOFT period, so raising SOFT cuts writes from repeat traffic proportionally — but a key seen
+# for the first time costs a write regardless, which is why the store choice below matters too.
+[vars]
+# How long a profile (skin, cape, current name) is fresh before a background refresh. Short TTLs
+# are cheap here because writes track *unique* keys, and a soft TTL only governs repeat traffic.
+TTL_PROFILE_SOFT = "300"
+# How long the store keeps it at all. Anything inside this window can still be served stale if
+# the upstream is down, so it is a resilience setting rather than a freshness one.
+TTL_PROFILE_HARD = "604800"
+# How long Cloudflare may answer for us without running the Worker.
+TTL_PROFILE_EDGE = "60"
+# Name lookups. Held longer than profiles, but not indefinitely: a released name can be claimed
+# by someone else, and a stale mapping then points at the wrong player.
+TTL_NAME_SOFT = "1800"
+TTL_NAME_HARD = "604800"
+TTL_NAME_EDGE = "300"
+# "No such player" answers are held at the edge only.
+TTL_NEGATIVE_EDGE = "60"
+# Upstream failures are held just long enough to blunt a retry storm.
+TTL_ERROR_EDGE = "10"
+# Persisting 404s would cost one write per unique unknown name, which is unbounded and entirely
+# caller-controlled. Leave off unless name enumeration is not a concern.
+KV_STORE_NEGATIVE = "false"
+# Whether callers may force a refresh with `Cache-Control: no-cache`. Off by default because it
+# costs a read, a write and an upstream call per request, and anyone can send it.
+ALLOW_CACHE_BYPASS = "false"
 
 # Workers Logs
 # Docs: https://developers.cloudflare.com/workers/observability/logs/workers-logs/
@@ -77,6 +115,17 @@ enabled = true
 [[kv_namespaces]]
 binding = "PROXY_CACHE"
 id = "cdb03f4846dd4a019bf9967477179efc"
+
+# D1 is the cache store whenever this binding is present; remove it to fall back to KV above.
+# Both cost one operation per lookup, but D1 charges $0.001/million rows read and $1.00/million
+# written against KV's $0.50 and $5.00, and allows 100,000 writes/day on the free plan rather than
+# 1,000. That matters because a first-ever lookup costs a write no matter how the TTLs are set.
+# Apply the schema with: npx wrangler d1 migrations apply mcproxy-cache --remote
+[[d1_databases]]
+binding = "CACHE_DB"
+database_name = "mcproxy-cache"
+database_id = "6691d35f-c610-4a2d-b453-62cdf0c628af"
+migrations_dir = "migrations"
 
 # Bind an mTLS certificate. Use to present a client certificate when communicating with another service.
 # Docs: https://developers.cloudflare.com/workers/wrangler/configuration/#mtls-certificates

@@ -1,73 +1,74 @@
-import {
-	cachedFunction,
-	EXPIRATION_NAME_LOOKUP,
-	EXPIRATION_PROFILE,
-	EXPIRATION_UUID_LOOKUP,
-	storeCached
-} from './cache';
-import { maybeJson, wrapHeaders } from './util';
+import { cached } from './cache';
+import { CacheConfig } from './config';
+import { CacheStore } from './store';
+import { maybeJson, normalizeName, normalizeUuid, wrapHeaders } from './util';
 import { CachedResponse, NameLookupResponse, ProfileLookupResponse } from './index';
 
-export async function nameToUuid(env: Env, name: string, headers: Headers): Promise<CachedResponse<NameLookupResponse>> {
-	const KEY = `name-to-uuid-${ name }`;
-	return await cachedFunction<NameLookupResponse>(env, KEY, async () => {
-		const response = await fetch(`https://api.minecraftservices.com/minecraft/profile/lookup/name/${ name }`, {
-			headers: wrapHeaders(headers)
-		});
-		// if (!response.ok) {
-		// 	return null;
-		// }
-		const data: NameLookupResponse | null = await maybeJson(response);
-		if (data) {
-			await storeCached(env, `uuid-to-name-${ data.id }`, response.status, data, EXPIRATION_UUID_LOOKUP);
-		}
-		return { data, status: response.status };
-	}, EXPIRATION_NAME_LOOKUP);
-	// return await cachedFetch<NameLookupResponse>(env, `name-to-uuid-${ name }`, `https://api.minecraftservices.com/minecraft/profile/lookup/name/${ name }`);
+export type LookupContext = {
+	store: CacheStore;
+	ctx?: ExecutionContext;
+	headers: Headers;
+	config: CacheConfig;
+	/** Caller sent `Cache-Control: no-cache` and wants us to go back to the upstream. */
+	bypass: boolean;
+};
+
+/**
+ * Two kinds of entry, one per thing we actually know:
+ *
+ *   profile:<uuid>  the full profile, which already contains the current name
+ *   name:<name>     the reverse index, which is the only thing the profile cannot answer
+ *
+ * There used to be a third, `uuid-to-name-<uuid>`, duplicating a field the profile already had.
+ * Every profile lookup wrote it, every name lookup wrote it, and answering from it cost a second
+ * read on top of the profile read. Deriving the name from the profile removes both.
+ */
+
+export async function getProfile(lookup: LookupContext, uuid: string): Promise<CachedResponse<ProfileLookupResponse>> {
+	const id = normalizeUuid(uuid);
+	return await cached<ProfileLookupResponse>(
+		lookup.store,
+		lookup.ctx,
+		`profile:${ id }`,
+		lookup.config.profile,
+		async () => {
+			const response = await fetch(`https://sessionserver.mojang.com/session/minecraft/profile/${ id }?unsigned=false`, {
+				headers: wrapHeaders(lookup.headers)
+			});
+			const data: ProfileLookupResponse | null = await maybeJson(response);
+			return { data, status: response.status };
+		},
+		{ bypass: lookup.bypass, storeNegative: lookup.config.storeNegative }
+	);
 }
 
-export async function getProfile(env: Env, uuid: string, headers: Headers): Promise<CachedResponse<NameLookupResponse>> {
-	const KEY = `uuid-to-profile-${ uuid }`;
-	return await cachedFunction<ProfileLookupResponse>(env, KEY, async () => {
-		const response = await fetch(`https://sessionserver.mojang.com/session/minecraft/profile/${ uuid }?unsigned=false`, {
-			headers: wrapHeaders(headers)
-		});
-		// if (!response.ok) {
-		// 	return null;
-		// }
-		const data: ProfileLookupResponse | null = await maybeJson(response);
-		// await storeCached(env, `uuid-to-name-${ data.id }`, true, {
-		// 	id: data.id,
-		// 	name: data.name
-		// });
-		// await storeCached(env, `name-to-uuid-${ data.name }`, true, {
-		// 	id: data.id,
-		// 	name: data.name
-		// });
-		return { data, status: response.status };
-	}, EXPIRATION_PROFILE);
-	// return await cachedFetch<NameLookupResponse>(env, `name-to-uuid-${ name }`, `https://api.minecraftservices.com/minecraft/profile/lookup/name/${ name }`);
+export async function nameToUuid(lookup: LookupContext, name: string): Promise<CachedResponse<NameLookupResponse>> {
+	const key = normalizeName(name);
+	return await cached<NameLookupResponse>(
+		lookup.store,
+		lookup.ctx,
+		`name:${ key }`,
+		lookup.config.name,
+		async () => {
+			const response = await fetch(`https://api.minecraftservices.com/minecraft/profile/lookup/name/${ name }`, {
+				headers: wrapHeaders(lookup.headers)
+			});
+			const data: NameLookupResponse | null = await maybeJson(response);
+			return { data, status: response.status };
+		},
+		{ bypass: lookup.bypass, storeNegative: lookup.config.storeNegative }
+	);
 }
 
-export async function uuidToName(env: Env, uuid: string, headers: Headers): Promise<CachedResponse<NameLookupResponse>> {
-	const KEY = `uuid-to-name-${ uuid }`;
-	return await cachedFunction<NameLookupResponse>(env, KEY, async () => {
-		const cachedProfile = await getProfile(env, uuid, headers);
-		if (!cachedProfile.ok || !cachedProfile.data) {
-			return { data: null, status: cachedProfile.status };
-		}
-		const data = cachedProfile.data;
-		await storeCached(env, `name-to-uuid-${ data.name }`, cachedProfile.status, {
-			id: data.id,
-			name: data.name
-		}, EXPIRATION_NAME_LOOKUP);
-		return {
-			data: {
-				id: data.id,
-				name: data.name
-			},
-			status: cachedProfile.status
-		};
-	}, EXPIRATION_UUID_LOOKUP);
-	// return await cachedFetch<NameLookupResponse>(env, `name-to-uuid-${ name }`, `https://api.minecraftservices.com/minecraft/profile/lookup/name/${ name }`);
+/**
+ * Served straight off the profile entry — same key, same read, no write of its own.
+ */
+export async function uuidToName(lookup: LookupContext, uuid: string): Promise<CachedResponse<NameLookupResponse>> {
+	const profile = await getProfile(lookup, uuid);
+	return {
+		ok: profile.ok,
+		status: profile.status,
+		data: profile.data ? { id: profile.data.id, name: profile.data.name } : null,
+		meta: profile.meta
+	};
 }
