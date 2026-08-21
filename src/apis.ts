@@ -1,10 +1,11 @@
 import { cached } from './cache';
 import { CacheConfig } from './config';
+import { CacheStore } from './store';
 import { maybeJson, normalizeName, normalizeUuid, wrapHeaders } from './util';
 import { CachedResponse, NameLookupResponse, ProfileLookupResponse } from './index';
 
 export type LookupContext = {
-	env: Env;
+	store: CacheStore;
 	ctx?: ExecutionContext;
 	headers: Headers;
 	config: CacheConfig;
@@ -26,7 +27,7 @@ export type LookupContext = {
 export async function getProfile(lookup: LookupContext, uuid: string): Promise<CachedResponse<ProfileLookupResponse>> {
 	const id = normalizeUuid(uuid);
 	return await cached<ProfileLookupResponse>(
-		lookup.env,
+		lookup.store,
 		lookup.ctx,
 		`profile:${ id }`,
 		lookup.config.profile,
@@ -44,7 +45,7 @@ export async function getProfile(lookup: LookupContext, uuid: string): Promise<C
 export async function nameToUuid(lookup: LookupContext, name: string): Promise<CachedResponse<NameLookupResponse>> {
 	const key = normalizeName(name);
 	return await cached<NameLookupResponse>(
-		lookup.env,
+		lookup.store,
 		lookup.ctx,
 		`name:${ key }`,
 		lookup.config.name,

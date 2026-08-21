@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { getProfile, LookupContext, nameToUuid, uuidToName } from '../src/apis';
+import { CachedResponse } from '../src/index';
 import { DEFAULT_CONFIG, MIN_KV_TTL, resolveConfig } from '../src/config';
+import { CacheStore } from '../src/store';
 import { resetMemory } from '../src/memory';
 
 /**
@@ -9,35 +11,35 @@ import { resetMemory } from '../src/memory';
  * back into a hot path is the bug worth catching.
  */
 
-type FakeKv = {
-	binding: KVNamespace;
+type FakeStore = {
+	store: CacheStore;
 	ops: { get: number; put: number };
-	store: Map<string, string>;
-	ttls: Map<string, number>;
+	rows: Map<string, { value: string; expires: number }>;
 };
 
-function fakeKv(): FakeKv {
-	const store = new Map<string, string>();
-	const ttls = new Map<string, number>();
+/** Counts operations and applies the hard TTL as a read filter, as both real backends do. */
+function fakeStore(): FakeStore {
+	const rows = new Map<string, { value: string; expires: number }>();
 	const ops = { get: 0, put: 0 };
-	const binding = {
-		async get(key: string) {
+	const store: CacheStore = {
+		name: 'kv',
+		async get<T>(key: string) {
 			ops.get++;
-			const raw = store.get(key);
-			return raw === undefined ? null : JSON.parse(raw);
+			const row = rows.get(key);
+			if (!row || row.expires <= Date.now()) return null;
+			return JSON.parse(row.value) as CachedResponse<T>;
 		},
-		async put(key: string, value: string, options?: { expirationTtl?: number }) {
+		async put<T>(key: string, entry: CachedResponse<T>, ttl: { hard: number }) {
 			ops.put++;
-			store.set(key, value);
-			if (options?.expirationTtl !== undefined) ttls.set(key, options.expirationTtl);
+			rows.set(key, { value: JSON.stringify(entry), expires: Date.now() + ttl.hard * 1000 });
 		}
-	} as unknown as KVNamespace;
-	return { binding, ops, store, ttls };
+	};
+	return { store, ops, rows };
 }
 
-function lookupFor(kv: FakeKv, overrides: Partial<LookupContext> = {}): LookupContext {
+function lookupFor(kv: FakeStore, overrides: Partial<LookupContext> = {}): LookupContext {
 	return {
-		env: { PROXY_CACHE: kv.binding } as Env,
+		store: kv.store,
 		ctx: undefined,
 		headers: new Headers(),
 		config: DEFAULT_CONFIG,
@@ -53,10 +55,11 @@ function respondWith(status: number, body: unknown | null) {
 }
 
 /** Rewrites a stored entry's soft expiry into the past, as if the soft TTL had elapsed. */
-function expireSoftly(kv: FakeKv, key: string) {
-	const entry = JSON.parse(kv.store.get(key)!);
+function expireSoftly(kv: FakeStore, key: string) {
+	const row = kv.rows.get(key)!;
+	const entry = JSON.parse(row.value);
 	entry.meta.expires = Date.now() - 1000;
-	kv.store.set(key, JSON.stringify(entry));
+	kv.rows.set(key, { ...row, value: JSON.stringify(entry) });
 }
 
 beforeEach(() => {
@@ -69,7 +72,7 @@ afterEach(() => {
 
 describe('profile caching', () => {
 	it('writes once on a miss and serves later requests without touching KV again', async () => {
-		const kv = fakeKv();
+		const kv = fakeStore();
 		const upstream = respondWith(200, PROFILE);
 		vi.stubGlobal('fetch', upstream);
 
@@ -87,7 +90,7 @@ describe('profile caching', () => {
 	});
 
 	it('does not rewrite an entry that is still fresh', async () => {
-		const kv = fakeKv();
+		const kv = fakeStore();
 		vi.stubGlobal('fetch', respondWith(200, PROFILE));
 
 		await getProfile(lookupFor(kv), PROFILE.id);
@@ -98,19 +101,19 @@ describe('profile caching', () => {
 		expect(kv.ops.put).toBe(1);
 	});
 
-	it('stores with the hard TTL, never below the KV minimum', async () => {
-		const kv = fakeKv();
+	it('stores with the hard TTL, well above the KV minimum', async () => {
+		const kv = fakeStore();
 		vi.stubGlobal('fetch', respondWith(200, PROFILE));
 
 		await getProfile(lookupFor(kv), PROFILE.id);
 
-		const ttl = kv.ttls.get(`profile:${ PROFILE.id }`)!;
-		expect(ttl).toBe(DEFAULT_CONFIG.profile.hard);
-		expect(ttl).toBeGreaterThanOrEqual(MIN_KV_TTL);
+		const held = (kv.rows.get(`profile:${ PROFILE.id }`)!.expires - Date.now()) / 1000;
+		expect(held).toBeGreaterThan(DEFAULT_CONFIG.profile.hard - 5);
+		expect(held).toBeGreaterThanOrEqual(MIN_KV_TTL);
 	});
 
 	it('serves a soft-expired entry immediately and refreshes it once', async () => {
-		const kv = fakeKv();
+		const kv = fakeStore();
 		vi.stubGlobal('fetch', respondWith(200, PROFILE));
 		await getProfile(lookupFor(kv), PROFILE.id);
 		resetMemory();
@@ -127,11 +130,11 @@ describe('profile caching', () => {
 		// The background refresh lands without a ctx to hold it open, so give it a turn.
 		await new Promise((resolve) => setTimeout(resolve, 0));
 		expect(upstream).toHaveBeenCalledTimes(1);
-		expect(JSON.parse(kv.store.get(`profile:${ PROFILE.id }`)!).data.name).toBe('renamed');
+		expect(JSON.parse(kv.rows.get(`profile:${ PROFILE.id }`)!.value).data.name).toBe('renamed');
 	});
 
 	it('collapses a burst on one key into a single upstream call and a single write', async () => {
-		const kv = fakeKv();
+		const kv = fakeStore();
 		const upstream = respondWith(200, PROFILE);
 		vi.stubGlobal('fetch', upstream);
 
@@ -144,7 +147,7 @@ describe('profile caching', () => {
 
 describe('failures are not persisted', () => {
 	it('never writes a rate-limited upstream response to KV', async () => {
-		const kv = fakeKv();
+		const kv = fakeStore();
 		vi.stubGlobal('fetch', respondWith(429, null));
 
 		const response = await getProfile(lookupFor(kv), PROFILE.id);
@@ -152,11 +155,11 @@ describe('failures are not persisted', () => {
 		expect(response.ok).toBe(false);
 		expect(response.meta.transient).toBe(true);
 		expect(kv.ops.put).toBe(0);
-		expect(kv.store.size).toBe(0);
+		expect(kv.rows.size).toBe(0);
 	});
 
 	it('falls back to the stale entry when the upstream is failing', async () => {
-		const kv = fakeKv();
+		const kv = fakeStore();
 		vi.stubGlobal('fetch', respondWith(200, PROFILE));
 		await getProfile(lookupFor(kv), PROFILE.id);
 		resetMemory();
@@ -171,7 +174,7 @@ describe('failures are not persisted', () => {
 	});
 
 	it('does not spend a write on an unknown name', async () => {
-		const kv = fakeKv();
+		const kv = fakeStore();
 		vi.stubGlobal('fetch', respondWith(404, { errorMessage: 'Not Found' }));
 
 		const response = await nameToUuid(lookupFor(kv), 'thisplayerisfake');
@@ -181,7 +184,7 @@ describe('failures are not persisted', () => {
 	});
 
 	it('persists an unknown name only when explicitly configured to', async () => {
-		const kv = fakeKv();
+		const kv = fakeStore();
 		vi.stubGlobal('fetch', respondWith(404, { errorMessage: 'Not Found' }));
 
 		const config = { ...DEFAULT_CONFIG, storeNegative: true };
@@ -191,7 +194,7 @@ describe('failures are not persisted', () => {
 	});
 
 	it('treats an empty 2xx body as a miss rather than caching a null', async () => {
-		const kv = fakeKv();
+		const kv = fakeStore();
 		vi.stubGlobal('fetch', respondWith(200, null));
 
 		const response = await nameToUuid(lookupFor(kv), 'someone');
@@ -203,7 +206,7 @@ describe('failures are not persisted', () => {
 
 describe('key normalization', () => {
 	it('shares one entry across name casings', async () => {
-		const kv = fakeKv();
+		const kv = fakeStore();
 		const upstream = respondWith(200, { id: PROFILE.id, name: 'inventivetalent' });
 		vi.stubGlobal('fetch', upstream);
 
@@ -213,24 +216,24 @@ describe('key normalization', () => {
 
 		expect(kv.ops.put).toBe(1);
 		expect(upstream).toHaveBeenCalledTimes(1);
-		expect([...kv.store.keys()]).toEqual(['name:inventivetalent']);
+		expect([...kv.rows.keys()]).toEqual(['name:inventivetalent']);
 	});
 
 	it('shares one entry across dashed and undashed uuids', async () => {
-		const kv = fakeKv();
+		const kv = fakeStore();
 		vi.stubGlobal('fetch', respondWith(200, PROFILE));
 
 		await getProfile(lookupFor(kv), '45f50155-c09f-4fdc-b5ce-e30af2ebd1f0');
 		await getProfile(lookupFor(kv), '45F50155C09F4FDCB5CEE30AF2EBD1F0');
 
 		expect(kv.ops.put).toBe(1);
-		expect([...kv.store.keys()]).toEqual([`profile:${ PROFILE.id }`]);
+		expect([...kv.rows.keys()]).toEqual([`profile:${ PROFILE.id }`]);
 	});
 });
 
 describe('uuid to name', () => {
 	it('answers from the profile entry without a key of its own', async () => {
-		const kv = fakeKv();
+		const kv = fakeStore();
 		vi.stubGlobal('fetch', respondWith(200, PROFILE));
 
 		const response = await uuidToName(lookupFor(kv), PROFILE.id);
@@ -238,11 +241,11 @@ describe('uuid to name', () => {
 		expect(response.data).toEqual({ id: PROFILE.id, name: PROFILE.name });
 		// One read, one write, one key — the old layout cost two reads and three writes here.
 		expect(kv.ops).toEqual({ get: 1, put: 1 });
-		expect([...kv.store.keys()]).toEqual([`profile:${ PROFILE.id }`]);
+		expect([...kv.rows.keys()]).toEqual([`profile:${ PROFILE.id }`]);
 	});
 
 	it('reuses an entry a profile lookup already paid for', async () => {
-		const kv = fakeKv();
+		const kv = fakeStore();
 		vi.stubGlobal('fetch', respondWith(200, PROFILE));
 
 		await getProfile(lookupFor(kv), PROFILE.id);
@@ -255,7 +258,7 @@ describe('uuid to name', () => {
 
 describe('bypass', () => {
 	it('goes back to the upstream when the caller sends no-cache', async () => {
-		const kv = fakeKv();
+		const kv = fakeStore();
 		vi.stubGlobal('fetch', respondWith(200, PROFILE));
 		await getProfile(lookupFor(kv), PROFILE.id);
 

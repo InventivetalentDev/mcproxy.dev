@@ -3,6 +3,7 @@ import { isValidName, isValidUuid, wantsFresh } from './util';
 import { sendError, sendResponse } from './response';
 import { CacheSource } from './cache';
 import { resolveConfig } from './config';
+import { resolveStore } from './store';
 import { getProfile, LookupContext, nameToUuid, uuidToName } from './apis';
 import { INDEX_HTML, PROFILE_HTML, rawHtmlResponse, UUID_HTML } from './html';
 
@@ -63,7 +64,7 @@ router.cors();
 function lookupContext(env: Env, req: { headers: Headers }, ctx?: ExecutionContext): LookupContext {
 	const config = resolveConfig(env);
 	return {
-		env: env,
+		store: resolveStore(env),
 		ctx: ctx,
 		headers: req.headers,
 		config: config,

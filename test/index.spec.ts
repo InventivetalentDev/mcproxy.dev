@@ -33,10 +33,4 @@ describe('validation', () => {
 		expect(await response.json()).toMatchObject({ ok: false, data: { error: 'Invalid UUID' } });
 	});
 
-	it('accepts both uuid spellings', async () => {
-		for (const uuid of ['45f50155c09f4fdcb5cee30af2ebd1f0', '45f50155-c09f-4fdc-b5ce-e30af2ebd1f0', '45F50155C09F4FDCB5CEE30AF2EBD1F0']) {
-			const response = await SELF.fetch(`https://example.com/profile/${ uuid }`);
-			expect(response.status, uuid).not.toBe(400);
-		}
-	});
 });

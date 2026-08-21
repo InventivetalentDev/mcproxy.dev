@@ -1,8 +1,10 @@
 import { CachedResponse, DataAndStatus } from './index';
-import { MIN_KV_TTL, TtlProfile } from './config';
+import { TtlProfile } from './config';
+import { CacheStore } from './store';
 import { dedupe, memoryGet, memorySet } from './memory';
 
-export type CacheSource = 'memory' | 'kv' | 'stale' | 'origin';
+/** Which layer answered. The store backends name themselves so `X-Cache` shows which one is live. */
+export type CacheSource = 'memory' | 'kv' | 'd1' | 'stale' | 'origin';
 
 export type CacheOptions = {
 	/** Ignore the cached copy and revalidate against the upstream (`Cache-Control: no-cache`). */
@@ -20,7 +22,7 @@ export type CacheOptions = {
  * slightly-old data instead of errors.
  */
 export async function cached<T>(
-	env: Env,
+	store: CacheStore,
 	ctx: ExecutionContext | undefined,
 	key: string,
 	ttl: TtlProfile,
@@ -31,24 +33,24 @@ export async function cached<T>(
 		const hot = memoryGet<CachedResponse<T>>(key);
 		if (hot) return tag(hot, 'memory');
 
-		const stored = await readKv<T>(env, key, ttl);
+		const stored = await read<T>(store, key, ttl);
 		if (stored) {
 			if (stored.meta.expires > Date.now()) {
 				memorySet(key, stored, ttl.soft);
-				return tag(stored, 'kv');
+				return tag(stored, store.name);
 			}
 			// Soft-expired. The read is already paid for, so serve it and refresh out of band —
 			// the one write that follows is shared by every request until the next soft expiry.
-			background(ctx, revalidate(env, key, ttl, fetcher, options, stored));
+			background(ctx, revalidate(store, key, ttl, fetcher, options, stored));
 			return tag(stored, 'stale');
 		}
 	}
 
-	return await revalidate(env, key, ttl, fetcher, options, null);
+	return await revalidate(store, key, ttl, fetcher, options, null);
 }
 
 function revalidate<T>(
-	env: Env,
+	store: CacheStore,
 	key: string,
 	ttl: TtlProfile,
 	fetcher: () => Promise<DataAndStatus<T | null>>,
@@ -79,36 +81,30 @@ function revalidate<T>(
 		// walk through the name space re-hits the upstream for every repeat of the same miss.
 		memorySet(key, entry, ttl.soft);
 		if (entry.ok || options.storeNegative) {
-			await writeKv(env, key, entry, ttl);
+			await write(store, key, entry, ttl);
 		}
 		return tag(entry, 'origin');
 	});
 }
 
-async function readKv<T>(env: Env, key: string, ttl: TtlProfile): Promise<CachedResponse<T> | null> {
+async function read<T>(store: CacheStore, key: string, ttl: TtlProfile): Promise<CachedResponse<T> | null> {
 	try {
-		// cacheTtl keeps the value in KV's own edge tier. It cuts latency, not the read bill —
-		// every get() is billed whether or not that tier serves it.
-		return await env.PROXY_CACHE.get<CachedResponse<T>>(key, {
-			type: 'json',
-			cacheTtl: Math.max(MIN_KV_TTL, ttl.soft)
-		});
+		return await store.get<T>(key, ttl);
 	} catch (e) {
-		// A read failure (quota exhausted, transient KV error) should cost freshness, not the request.
-		console.error(`KV read failed for ${ key }`, e);
+		// A read failure (quota exhausted, a transient store error, a corrupt value) should cost
+		// freshness, not the request.
+		console.error(`${ store.name } read failed for ${ key }`, e);
 		return null;
 	}
 }
 
-async function writeKv<T>(env: Env, key: string, entry: CachedResponse<T>, ttl: TtlProfile): Promise<void> {
+async function write<T>(store: CacheStore, key: string, entry: CachedResponse<T>, ttl: TtlProfile): Promise<void> {
 	try {
-		await env.PROXY_CACHE.put(key, JSON.stringify(entry), {
-			expirationTtl: Math.max(MIN_KV_TTL, Math.round(ttl.hard))
-		});
+		await store.put<T>(key, entry, ttl);
 	} catch (e) {
 		// Same reasoning as reads, and this is the path that trips first when the daily write
 		// allowance runs out: degrade to an uncached proxy rather than failing outright.
-		console.error(`KV write failed for ${ key }`, e);
+		console.error(`${ store.name } write failed for ${ key }`, e);
 	}
 }
 

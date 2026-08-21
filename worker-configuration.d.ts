@@ -2,6 +2,8 @@
 
 interface Env {
 	PROXY_CACHE: KVNamespace;
+	/** When bound, this is used as the cache store instead of PROXY_CACHE. See src/store.ts. */
+	CACHE_DB?: D1Database;
 
 	// Cache tuning, all optional and all parsed defensively in src/config.ts so the Worker still
 	// runs with none of them set. Documented in wrangler.toml.

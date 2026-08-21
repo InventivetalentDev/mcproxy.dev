@@ -1,9 +1,10 @@
 /**
  * Cache tuning.
  *
- * KV bills per operation, and writes cost 10x reads ($5.00 vs $0.50 per million), so the
- * numbers below are the main lever on the bill. `soft` is the one that matters most: a key is
- * rewritten at most once per soft period, so halving `soft` doubles the write volume.
+ * Both stores bill per operation and both charge more for writes than reads, so `soft` is the
+ * number that matters: a key is rewritten at most once per soft period, so halving `soft` doubles
+ * the write volume *from repeat traffic*. It does nothing for keys seen once — those cost a write
+ * whatever the setting — which is why the store itself (src/store.ts) is the other half of this.
  *
  * Every value can be overridden from `[vars]` in wrangler.toml, so usage can be dialled back
  * without a code change or a redeploy of the logic.
@@ -38,14 +39,17 @@ export type CacheConfig = {
 	allowBypass: boolean;
 };
 
-/** KV rejects an expirationTtl below this, and rate limits writes to one per key per second. */
+/** KV rejects an expirationTtl below this, and rate limits writes to one key per second. */
 export const MIN_KV_TTL = 60;
 
 export const DEFAULT_CONFIG: CacheConfig = {
-	// Skins and capes change rarely, but people do expect to see their own change land.
-	profile: { soft: 60 * 60, hard: 7 * 24 * 60 * 60, edge: 5 * 60 },
-	// Mojang only allows a name change every 30 days, so this can be held far longer.
-	name: { soft: 6 * 60 * 60, hard: 7 * 24 * 60 * 60, edge: 60 * 60 },
+	// About five minutes to pick up a skin or cape change. Cheap to keep short: a soft TTL only
+	// governs repeat traffic, and traffic here is mostly one-off lookups that pay a write anyway.
+	profile: { soft: 5 * 60, hard: 7 * 24 * 60 * 60, edge: 60 },
+	// Held longer than profiles because name changes need a 30-day cooldown, but not indefinitely:
+	// a released name can be claimed by someone else, and a stale mapping then points at the
+	// wrong player, which is a worse failure than a stale skin.
+	name: { soft: 30 * 60, hard: 7 * 24 * 60 * 60, edge: 5 * 60 },
 	negativeEdge: 60,
 	errorEdge: 10,
 	storeNegative: false,
