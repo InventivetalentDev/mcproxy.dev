@@ -74,6 +74,22 @@ export const INDEX_HTML = HTML_WRAPPER(`
 			Get Profile from UUID
 			</td>
 		</tr>
+		<tr>
+			<td>
+			<a href="/skin">/skin/{name or uuid}</a>
+			</td>
+			<td>
+			Get Skin image from Name or UUID
+			</td>
+		</tr>
+		<tr>
+			<td>
+			<a href="/cape">/cape/{name or uuid}</a>
+			</td>
+			<td>
+			Get Cape image from Name or UUID
+			</td>
+		</tr>
 
 	</table>
 </div>
@@ -139,6 +155,52 @@ Proxies <code>https://sessionserver.mojang.com/session/minecraft/profile/{uuid}?
 Loading...
 /profile/bcd2033c63ec4bf88aca680b22461340
 </pre>
+</div>
+`);
+
+export const SKIN_HTML = HTML_WRAPPER(`
+<h1><a href="/">mcproxy.dev</a></h1>
+<h2>Get Skin image from Name or UUID</h2>
+<div>
+	<ul>
+		<li>
+			<a href="/skin/inventivetalent">/skin/inventivetalent</a>
+		</li>
+		<li>
+			<a href="/skin/45f50155c09f4fdcb5cee30af2ebd1f0">/skin/45f50155c09f4fdcb5cee30af2ebd1f0</a>
+		</li>
+	</ul>
+</div>
+<br/>
+<div>
+Resolves the profile via <code>https://sessionserver.mojang.com/session/minecraft/profile/{uuid}</code> and proxies the skin from <code>https://textures.minecraft.net/texture/{hash}</code>. Responds with the PNG itself, or 404 if the player has no skin.
+</div>
+<br/>
+<div>
+<img src="/skin/inventivetalent" alt="/skin/inventivetalent" width="128" height="128" style="image-rendering: pixelated;">
+</div>
+`);
+
+export const CAPE_HTML = HTML_WRAPPER(`
+<h1><a href="/">mcproxy.dev</a></h1>
+<h2>Get Cape image from Name or UUID</h2>
+<div>
+	<ul>
+		<li>
+			<a href="/cape/jeb_">/cape/jeb_</a>
+		</li>
+		<li>
+			<a href="/cape/61699b2ed3274a019f1e0ea8c3f06bc6">/cape/61699b2ed3274a019f1e0ea8c3f06bc6</a>
+		</li>
+	</ul>
+</div>
+<br/>
+<div>
+Resolves the profile via <code>https://sessionserver.mojang.com/session/minecraft/profile/{uuid}</code> and proxies the cape from <code>https://textures.minecraft.net/texture/{hash}</code>. Responds with the PNG itself, or 404 if the player has no cape.
+</div>
+<br/>
+<div>
+<img src="/cape/jeb_" alt="/cape/jeb_" width="128" height="64" style="image-rendering: pixelated;">
 </div>
 `);
 

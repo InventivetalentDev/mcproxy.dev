@@ -33,4 +33,22 @@ describe('validation', () => {
 		expect(await response.json()).toMatchObject({ ok: false, data: { error: 'Invalid UUID' } });
 	});
 
+	it('rejects a malformed name on the texture routes', async () => {
+		for (const kind of ['skin', 'cape']) {
+			const response = await SELF.fetch(`https://example.com/${ kind }/not a valid name`);
+
+			expect(response.status).toBe(400);
+			expect(await response.json()).toMatchObject({ ok: false, data: { error: 'Invalid name or UUID' } });
+		}
+	});
+
+	it('serves the texture pages as cacheable html', async () => {
+		for (const kind of ['skin', 'cape']) {
+			const response = await SELF.fetch(`https://example.com/${ kind }`);
+
+			expect(response.status).toBe(200);
+			expect(response.headers.get('content-type')).toContain('text/html');
+			expect(await response.text()).toContain(`/${ kind }/`);
+		}
+	});
 });
