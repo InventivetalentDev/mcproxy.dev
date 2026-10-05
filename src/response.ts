@@ -9,8 +9,9 @@ import { CacheConfig, TtlProfile } from './config';
  * answering from its copy and refreshes with a single background request, and `stale-if-error`
  * keeps it serving if we or the upstream fall over.
  */
-export function sendResponse<T>(response: CachedResponse<T>, ttl: TtlProfile, config: CacheConfig): Response {
+export function sendResponse<T>(response: CachedResponse<T>, ttl: TtlProfile, config: CacheConfig, init: { status?: number } = {}): Response {
 	return Response.json(response, {
+		status: init.status,
 		headers: {
 			'Cache-Control': cacheControl(response, ttl, config),
 			'Last-Modified': new Date(response.meta.fetched).toUTCString(),
@@ -56,6 +57,49 @@ export function sendError(message: string, status: number = 400): Response {
 		status: status,
 		headers: {
 			'Cache-Control': 'public, max-age=3600'
+		}
+	});
+}
+
+/**
+ * A player who exists but has no cape (or, rarely, no skin). Legitimate and liable to change, so
+ * it is held like any other negative answer rather than like a malformed request.
+ */
+export function sendNotFound(message: string, config: CacheConfig): Response {
+	return Response.json(errorBody(message, 404), {
+		status: 404,
+		headers: {
+			'Cache-Control': `public, max-age=${ config.negativeEdge }`
+		}
+	});
+}
+
+/**
+ * Streams a texture through from textures.minecraft.net.
+ *
+ * Texture URLs are content-addressed, so the bytes behind one never change and the upstream fetch
+ * is cached at the edge for the hard TTL. What *does* change is which URL a profile points at,
+ * so the response to the caller carries the profile's edge TTLs: it goes stale exactly as fast as
+ * the profile it was derived from.
+ */
+export async function sendTexture<T>(url: string, lookup: CachedResponse<T>, ttl: TtlProfile, config: CacheConfig): Promise<Response> {
+	const upstream = await fetch(url, {
+		cf: { cacheEverything: true, cacheTtl: ttl.hard }
+	});
+	if (!upstream.ok) {
+		return Response.json(errorBody('Texture unavailable', 502), {
+			status: 502,
+			headers: { 'Cache-Control': `public, max-age=${ config.errorEdge }` }
+		});
+	}
+	return new Response(upstream.body, {
+		status: 200,
+		headers: {
+			// Always a PNG, whatever the upstream says: it labels some capes as binary/octet-stream.
+			'Content-Type': 'image/png',
+			'Cache-Control': cacheControl(lookup, ttl, config),
+			'Last-Modified': new Date(lookup.meta.fetched).toUTCString(),
+			'X-Cache': (lookup.meta.source ?? 'origin').toUpperCase()
 		}
 	});
 }

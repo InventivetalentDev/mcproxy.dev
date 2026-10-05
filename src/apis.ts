@@ -1,7 +1,7 @@
 import { cached } from './cache';
 import { CacheConfig } from './config';
 import { CacheStore } from './store';
-import { maybeJson, normalizeName, normalizeUuid, wrapHeaders } from './util';
+import { decodeTextures, isValidUuid, maybeJson, normalizeName, normalizeUuid, Textures, wrapHeaders } from './util';
 import { CachedResponse, NameLookupResponse, ProfileLookupResponse } from './index';
 
 export type LookupContext = {
@@ -69,6 +69,50 @@ export async function uuidToName(lookup: LookupContext, uuid: string): Promise<C
 		ok: profile.ok,
 		status: profile.status,
 		data: profile.data ? { id: profile.data.id, name: profile.data.name } : null,
+		meta: profile.meta
+	};
+}
+
+export type TexturesResponse = {
+	id: string;
+	name: string;
+	textures: Textures;
+};
+
+/**
+ * Accepts either spelling. A name costs one extra cached read for the reverse index; a UUID goes
+ * straight to the profile entry.
+ */
+export async function resolveUuid(lookup: LookupContext, nameOrUuid: string): Promise<CachedResponse<NameLookupResponse>> {
+	if (isValidUuid(nameOrUuid)) {
+		return {
+			ok: true,
+			status: 200,
+			data: { id: normalizeUuid(nameOrUuid), name: '' },
+			meta: { cached: false, fetched: Date.now(), expires: Date.now(), expiration: 0 }
+		};
+	}
+	return await nameToUuid(lookup, nameOrUuid);
+}
+
+/**
+ * Projected off the profile entry like `uuidToName`: the texture URLs live inside the signed
+ * `textures` property, so this costs no read or write of its own beyond the profile.
+ */
+export async function getTextures(lookup: LookupContext, nameOrUuid: string): Promise<CachedResponse<TexturesResponse>> {
+	const resolved = await resolveUuid(lookup, nameOrUuid);
+	if (!resolved.ok || !resolved.data) {
+		return { ok: false, status: resolved.status, data: null, meta: resolved.meta };
+	}
+	const profile = await getProfile(lookup, resolved.data.id);
+	return {
+		ok: profile.ok,
+		status: profile.status,
+		data: profile.data ? {
+			id: profile.data.id,
+			name: profile.data.name,
+			textures: decodeTextures(profile.data.properties)
+		} : null,
 		meta: profile.meta
 	};
 }

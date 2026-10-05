@@ -1,11 +1,11 @@
 import { Router } from '@tsndr/cloudflare-worker-router';
 import { isValidName, isValidUuid, wantsFresh } from './util';
-import { sendError, sendResponse } from './response';
+import { sendError, sendNotFound, sendResponse, sendTexture } from './response';
 import { CacheSource } from './cache';
 import { resolveConfig } from './config';
 import { resolveStore } from './store';
-import { getProfile, LookupContext, nameToUuid, uuidToName } from './apis';
-import { INDEX_HTML, PROFILE_HTML, rawHtmlResponse, UUID_HTML } from './html';
+import { getProfile, getTextures, LookupContext, nameToUuid, uuidToName } from './apis';
+import { CAPE_HTML, INDEX_HTML, PROFILE_HTML, rawHtmlResponse, SKIN_HTML, UUID_HTML } from './html';
 
 // Env Types
 export type Var<T = string> = T
@@ -156,6 +156,51 @@ router.get('/profile/:uuid', async ({ env, req, ctx }) => {
 	const lookup = lookupContext(env, req, ctx);
 	const response = await getProfile(lookup, uuid);
 	return sendResponse(response, lookup.config.profile, lookup.config);
+});
+
+/**
+ * Skin and cape are served as the image itself, so they can go straight into an <img> or a
+ * renderer. Both accept a name or a UUID and ride on the cached profile entry.
+ */
+function isValidNameOrUuid(nameOrUuid: string): boolean {
+	return nameOrUuid.length < 32 ? isValidName(nameOrUuid) : isValidUuid(nameOrUuid);
+}
+
+async function textureRoute(kind: 'skin' | 'cape', env: Env, req: { headers: Headers; params: Record<string, string> }, ctx?: ExecutionContext): Promise<Response> {
+	const nameOrUuid = req.params.nameOrUuid;
+	if (!isValidNameOrUuid(nameOrUuid)) {
+		return sendError('Invalid name or UUID');
+	}
+	const lookup = lookupContext(env, req, ctx);
+	const response = await getTextures(lookup, nameOrUuid);
+	if (!response.ok || !response.data) {
+		// Player not found, or the upstream fell over: same body and headers as the JSON routes,
+		// but with a real HTTP status so an <img> or a renderer sees the failure instead of 200 + JSON.
+		// Mojang answers an unknown UUID with 204, which is a "not found" for our purposes.
+		const status = response.meta.transient ? 502 : 404;
+		return sendResponse(response, lookup.config.profile, lookup.config, { status });
+	}
+	const url = response.data.textures[kind];
+	if (!url) {
+		return sendNotFound(`Player has no ${ kind }`, lookup.config);
+	}
+	return await sendTexture(url, response, lookup.config.profile, lookup.config);
+}
+
+router.get('/skin', async () => {
+	return await rawHtmlResponse(SKIN_HTML);
+});
+
+router.get('/skin/:nameOrUuid', async ({ env, req, ctx }) => {
+	return await textureRoute('skin', env, req, ctx);
+});
+
+router.get('/cape', async () => {
+	return await rawHtmlResponse(CAPE_HTML);
+});
+
+router.get('/cape/:nameOrUuid', async ({ env, req, ctx }) => {
+	return await textureRoute('cape', env, req, ctx);
 });
 
 // Listen Cloudflare Workers Fetch Event

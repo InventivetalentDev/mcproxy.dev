@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isValidName, isValidUuid, normalizeName, normalizeUuid, wantsFresh } from '../src/util';
+import { decodeTextures, isValidName, isValidUuid, normalizeName, normalizeUuid, wantsFresh } from '../src/util';
 
 describe('uuid validation', () => {
 	it('accepts both spellings, in either case', () => {
@@ -47,5 +47,40 @@ describe('freshness requests', () => {
 	it('is not fooled by a directive that merely contains one', () => {
 		expect(wantsFresh(new Headers({ 'cache-control': 'max-age=0' }))).toBe(false);
 		expect(wantsFresh(new Headers())).toBe(false);
+	});
+});
+
+describe('texture decoding', () => {
+	const encode = (textures: object) => btoa(JSON.stringify({ textures }));
+
+	it('pulls skin, cape and arm model out of the textures property', () => {
+		const value = encode({
+			SKIN: { url: 'http://textures.minecraft.net/texture/abc', metadata: { model: 'slim' } },
+			CAPE: { url: 'http://textures.minecraft.net/texture/def' }
+		});
+		expect(decodeTextures([{ name: 'textures', value }])).toEqual({
+			skin: 'https://textures.minecraft.net/texture/abc',
+			slim: true,
+			cape: 'https://textures.minecraft.net/texture/def'
+		});
+	});
+
+	it('treats a missing cape as absent, not as an error', () => {
+		const value = encode({ SKIN: { url: 'http://textures.minecraft.net/texture/abc' } });
+		expect(decodeTextures([{ name: 'textures', value }])).toEqual({
+			skin: 'https://textures.minecraft.net/texture/abc',
+			slim: false
+		});
+	});
+
+	it('refuses to proxy anything that is not on the texture host', () => {
+		const value = encode({ SKIN: { url: 'https://example.com/evil.png' } });
+		expect(decodeTextures([{ name: 'textures', value }])).toEqual({});
+	});
+
+	it('survives a profile with no or garbage properties', () => {
+		expect(decodeTextures(undefined)).toEqual({});
+		expect(decodeTextures([])).toEqual({});
+		expect(decodeTextures([{ name: 'textures', value: 'not base64 json' }])).toEqual({});
 	});
 });
